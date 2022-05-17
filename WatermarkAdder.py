@@ -1,3 +1,4 @@
+#!/usr/bin/python3
 #
 #	WatermarkAdder.py
 #
@@ -5,19 +6,31 @@
 #	This Script Is Following MIT License
 #
 from PIL import Image, ImageDraw, ImageFont, ImageStat
+import signal
 import time
+#import webp
 import base64
 import os
 import sys
 import shutil
 import _thread
+from pathlib import Path
+import re
+
+def sighandler(signum, frame):
+	_thread.exit()
+	print("EXIT!")
+	sys.exit(0)
+
+signal.signal(signal.SIGINT, sighandler)
+signal.signal(signal.SIGSEGV,sighandler)
 
 # 源图片目录
 source_pic_dir = os.path.join('..','postrc_source','watermark')
 # 输出目录
-destination_pic_dir = os.path.join('..','source','resources','images','postrc')
+destination_pic_dir = os.path.join('..','images','postrc')
 # 站点
-Site = 'https://www.kawashiros.club'
+Site = 'https://bkryofu.xyz'
 # 著作权人
 Owner =  u'非科学の河童'
 
@@ -40,7 +53,7 @@ CCLOGO = ['iVBORw0KGgoAAAANSUhEUgAAAH0AAAB9CAYAAACPgGwlAAAACXBIWXMAAAsTAAALEwEAm
 def text2img(text, font_color="White", font_size=20):
     # 字体(ttf/otf)，其他设置应注意路径
     # 建议选择无版权免费商用字体
-    font = ImageFont.truetype(os.path.join(sys.path[0], '.', 'SourceHanSansCN-Light.otf'), font_size)
+    font = ImageFont.truetype(os.path.join(sys.path[0], '.', 'SourceHanSansCN-Medium.otf'), font_size)
     # 多行文字处理
     text = text.split('\n')
     mark_width = 0
@@ -90,54 +103,123 @@ def getWatermark(mode):
 def BrightnessDetect(img):
 	# 转换为灰度单通道
 	imgGray = img.convert('L')
+	# 裁剪 (左上x，左上y，右下x，右下y)
+	box = (0,0,int(imgGray.size[0]*0.33),int(imgGray.size[1]*0.33))
+	img = img.crop(box)
+	
 	return ImageStat.Stat(imgGray).mean[0]
 
 # 水印添加
-def PutOnWatermark(img):
+# img 	图片对象
+# left	水印位于左	
+# top	水印位于上
+def PutOnWatermark(img, left = True, top = True):
+	# 先取得一个水印样本
+	watermark = getWatermark(0)
+	p =  img.width / watermark.width
+	watermark = watermark.resize((int(watermark.width * p * 0.25) , int(watermark.height * p * 0.25)))
+	if(left and top):
+		x = int(0.03125 * img.width)
+		y = int(0.03125 * img.height)
+	elif(left and not top):
+		x = int(0.03125 * img.width)
+		y = img.height - watermark.height - int(0.03125 * img.height)
+	elif(top and not left):
+		x = img.width - watermark.width - int(0.03125 * img.width)
+		y = int(0.03125 * img.height)
+	else: 
+		x = img.width - watermark.width - int(0.03125 * img.width)
+		y = img.height - watermark.height - int(0.03125 * img.height)
+	box = (x, y, x + watermark.width, y + watermark.height)
+	
+	
 	# 水印模式：灰度>127使用深色水印，灰度<127使用浅色水印
 	watermarkmode = Light
-	if(BrightnessDetect(img) > 96):
+	imgsample = img.crop(box)
+	if(BrightnessDetect(imgsample) > 127):
 		watermarkmode = Dark
 	
+
+
 	watermark = getWatermark(watermarkmode)
 	p =  img.width / watermark.width
-
-	watermark = watermark.resize((int(watermark.width * p * 0.25) , int(watermark.height * p * 0.25)), Image.ANTIALIAS)
+	watermark = watermark.resize((int(watermark.width * p * 0.25) , int(watermark.height * p * 0.25)))
 	
 	(r, g, b, a) = watermark.split()
-	img.paste(watermark, (int(0.03125 * img.width), int(0.03125 * img.height)), mask=a)
-	return img	
 
-# 受限于Git，上传时不会创建图片资源目录
-if(not os.path.isdir(os.path.join(sys.path[0], destination_pic_dir))):
-	os.mkdir(os.path.join(sys.path[0], destination_pic_dir))
+	img.paste(watermark, ( x, y), mask=a)
+	#return img
 
-# 直接转移不需要水印的图片站点静态文件目录下的postrc
+if __name__ == "__main__":
+	DEST = os.path.join(sys.path[0], destination_pic_dir)
 
-os.chdir(os.path.join(sys.path[0], '..','postrc_source', 'pure'))
-l = os.listdir()
-for a in l:
-	if(a.split('.')[-1] == 'webp'):
-		shutil.copy(os.path.join('.', a), os.path.join(sys.path[0], destination_pic_dir))
-		print("PASS: "+ a)
-	else:
+	# 受限于Git，上传时不会创建图片资源目录
+	try:
+		os.remove(DEST)
+	except:
 		pass
 
-# 添加水印
-os.chdir(os.path.join('..', 'watermark'))
-if(not os.path.isdir('exectmp')):
-	os.mkdir('exectmp')
-l = os.listdir()
+	try:
+		os.mkdir(DEST)
+	except:
+		pass	
 
-for a in l:
-	if(a.split('.')[-1] == 'webp'):
-		t = Image.open(a)
-		t = PutOnWatermark(t)
-		t.save(os.path.join('exectmp',a))
-		shutil.move(os.path.join('exectmp', a), os.path.join(sys.path[0], destination_pic_dir))
-		print("PASS: "+ a)
-	else:
-		pass
+	# 直接转移不需要水印的图片站点静态文件目录下的postrc
+
+	#os.chdir(os.path.join(sys.path[0], '..','postrc_source', 'pure'))
+
+	for a in os.listdir(os.path.join(sys.path[0], '..','postrc_source', 'modify_needless')):
+		if(a.split('.')[-1] == 'webp'):
+			shutil.copy(os.path.join(sys.path[0], '..','postrc_source', 'modify_needless', a), DEST)
+			#r = Image.open(os.path.join(sys.path[0], '..','postrc_source', 'pure', a))
+			#while(r.size[0] > 2500 or r.size[1] > 2500):
+			#	r = r.resize((int(r.size[0]*0.8), int(r.size[1]*0.8)))
+			#r.save(os.path.join(sys.path[0], destination_pic_dir, a))
+			print("PASS: "+ a)
+			#time.sleep(0.25)
+		else:
+			pass
 
 
-shutil.rmtree('exectmp')
+
+	for a in os.listdir(os.path.join(sys.path[0], '..','postrc_source', 'pure')):
+		if(a.split('.')[-1] == 'webp'):
+			#shutil.copy(os.path.join(sys.path[0], '..','postrc_source', 'pure', a), os.path.join(sys.path[0], destination_pic_dir))
+			r = Image.open(os.path.join(sys.path[0], '..','postrc_source', 'pure', a))
+			while(r.size[0] > 2500 or r.size[1] > 2500):
+				r = r.resize((int(r.size[0]*0.8), int(r.size[1]*0.8)))
+			r.save(os.path.join(sys.path[0], destination_pic_dir, a))
+			print("PASS: "+ a)
+			#time.sleep(0.25)
+		else:
+			pass
+
+	# 添加水印
+	# (todo: 多线程)
+
+	for a in os.listdir(os.path.join(sys.path[0], '..','postrc_source', 'watermark')):
+		if(a.split('.')[-1] == 'webp'):
+			t = Image.open(os.path.join(sys.path[0], source_pic_dir, a))
+			
+			if(a.split('.')[1] != 'webp' and len(re.compile(r'0b..').findall(a.split('.')[1]))):
+				b = int(a.split('.')[1].split('0b')[1],2)
+				PutOnWatermark(t, bool(b >> 0b01), bool(b % 0b10))
+			else:
+				PutOnWatermark(t, True, True)
+
+			
+			while(t.size[0] > 1920 or t.size[1] > 1080):
+				t = t.resize((int(t.size[0]*0.8), int(t.size[1]*0.8)))
+			
+			try:
+				#webp.save_image(t, os.path.join(os.path.join(sys.path[0], destination_pic_dir, a)), quality=80)
+				t.save(os.path.join(os.path.join(sys.path[0], destination_pic_dir, a)))
+			except:
+				print('IGONRE: ' + a)
+			else:
+				print('PASS: '+a)
+			
+		else:
+			print('IGONRE: '+ a)
+
+	
